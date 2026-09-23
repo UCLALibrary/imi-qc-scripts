@@ -1,0 +1,5 @@
+output/
+__pycache__/
+.iiif_cache
+
+.DS_Store
