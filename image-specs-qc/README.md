@@ -1,6 +1,6 @@
 # Image Spec Check
 
-Checks delivered TIFFs' technical specs — embedded color profile, bit depth,
+Checks technical specs in TIFFs — embedded color profile, bit depth,
 channel count, compression, and resolution — against the imaging delivery
 spec.
 
@@ -49,18 +49,15 @@ Run with `--help` for the full list.
 
 ## Output
 
-Prints each directory's result as soon as it's checked, rather than staying
-silent until the whole tree is done — the walk itself can take a while over
-a network mount, and without this it can look identical to hanging. The CSV
+Prints each directory's result in the terminal as it's checked. The CSV
 is written a row at a time as each directory finishes, so an interrupted run
 (Ctrl-C, dropped connection) still leaves partial, usable results.
 
 By default the report is written to `output/<folder-name>-report.csv`,
 inside an `output/` folder next to the script itself — not the current
 directory — so it lands in the same place regardless of where the script is
-run from. `output/` is git-ignored. Rerunning on the same root overwrites
-its previous report. Pass `--out` for a different path; it's used exactly
-as given (a bare filename goes in the current directory, not `output/`).
+run from. Rerunning on the same root overwrites its previous report. 
+Pass `--out` for a different path.
 
 Findings have three severities:
 
@@ -87,6 +84,4 @@ Findings have three severities:
   regardless of file size — this is what makes it practical to run against
   a network mount.
 - **Other specs**: defaults match the Islamic Manuscripts Initiative
-  delivery spec. For a different spec (e.g. Han Yu Shan, which allows LZW
-  compression and 16-bit), override the relevant flags rather than editing
-  the script.
+  delivery spec. For a different spec, it is possible to override the relevant flags.

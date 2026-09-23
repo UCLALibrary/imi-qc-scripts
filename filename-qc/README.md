@@ -1,15 +1,11 @@
 # manifest_qc_v2.py
 
-Filename-convention checker for UCLA Library Special Collections imaging
-manifests (CLIR Islamic Manuscripts Initiative). Validates delivered TIFF
-filenames against the naming rules only — it cannot see the images, so it
-reports structure (typo vs. misplaced image vs. missing capture is left to
-human review) rather than making a "this is definitely wrong" call.
+Filename QC for Islamic Manuscripts Initiative. Validates TIFF filenames against the project naming conventions, reporting structural anomalies and errors for review.
 
 ## Usage
 
 ```
-python manifest_qc_v2.py MANIFEST.xlsx [MORE.xlsx ...] [--status status.csv] [--out PATH]
+python manifest_qc_v2.py MANIFEST.xlsx [MANIFEST2.xlsx ...] [--status status.csv] [--out PATH]
 ```
 
 - Accepts `.xlsx` (reads whichever sheet has the most `.tif`-suffixed names
@@ -35,8 +31,7 @@ message`) across all input manifests:
   missing, and a rerun on the same manifest overwrites its previous report.
 - `output/` is gitignored; the location doesn't depend on the directory the
   script is run from.
-- Written as UTF-8 with no BOM, LF line endings, and all fields quoted, per
-  the project's file-writing convention.
+- Written as UTF-8 with no BOM, LF line endings, and all fields quoted
 
 ## Filename structure
 

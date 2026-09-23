@@ -12,7 +12,7 @@ All three scripts write to `output/` beside the scripts unless given an explicit
 |---|---|
 | `focus_check_iiif.py` | Checks images already on the IIIF server, from a Pages CSV export. |
 | `manuscript_focus_check.py` | Checks TIFFs on disk, one folder per manuscript. Also holds the shared analysis code, so it must sit in the same folder as `focus_check_iiif.py`. |
-| `focus_ai_review.py` | Optional. Sends borderline pages to a vision model for a second opinion. See [Optional: AI review](#optional-ai-review). |
+| `focus_ai_review.py` | Optional. Sends borderline pages to a vision model for a second opinion. See [Optional: AI review](#optional-ai-review--not-yet-run-against-a-real-model). |
 | `IMI_focus_QC_decision_log.md` | Why the tool works the way it does, including the evidence and the changes along the way. |
 
 ## Setup
@@ -38,13 +38,13 @@ Run `source .venv/bin/activate` again in each new terminal.
 **Images on the IIIF server:**
 
 ```
-python focus_check_iiif.py path/to/wellcome-b1-1-pages.csv
+python focus_check_iiif.py path/to/wellcome-b1-pages.csv
 ```
 
 Results go in a folder named after the CSV, inside `output/` beside the scripts — wherever you run the command from:
 
 ```
-output/wellcome-b1-1-pages/
+output/wellcome-b1-pages/
     report.csv
     report-manuscripts.csv
     summary.txt
@@ -55,7 +55,7 @@ Several CSVs can be given in one command; each gets its own folder. Running the 
 
 `output/` is gitignored. `--output-dir` puts the batch folders somewhere else.
 
-Downloaded images are cached in `.iiif_cache/`, so re-running (for example, after changing a setting) takes seconds, and an interrupted run picks up where it stopped.
+Downloaded images are cached in `output/.iiif_cache/`, so re-running (for example, after changing a setting) takes seconds, and an interrupted run picks up where it stopped.
 
 **TIFFs on disk:**
 
@@ -173,13 +173,13 @@ Run either script with `--help` for the full list.
 - **The blank-page rule was calibrated on one batch**, and the drift rule has no confirmed real example yet.
 - **Scores from IIIF images and from TIFFs are not comparable** with each other. Only compare within one run.
 
-## Optional: AI review
+## Optional: AI review — not yet run against a real model
 
 `focus_ai_review.py` sends borderline pages (local ratio between 0.70 and 0.85 by default) to a vision model, as pairs: the page and its sharpest neighbour, cropped at full resolution. It needs an API key (`GEMINI_API_KEY` or `ANTHROPIC_API_KEY`).
 
 ```
-python focus_ai_review.py wellcome-b1-1-pages/report.csv --backend stub --dry-run    # no calls; shows what would be sent
-python focus_ai_review.py wellcome-b1-1-pages/report.csv --backend gemini --rpm 10   # real run
+python focus_ai_review.py output/wellcome-b1-pages/report.csv --backend stub --dry-run    # no calls; shows what would be sent
+python focus_ai_review.py output/wellcome-b1-pages/report.csv --backend gemini --rpm 10   # real run
 ```
 
 With `--ground-truth known.csv` (columns `file`, `verdict` = soft/ok) it scores the model's answers against known results.
