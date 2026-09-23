@@ -13,6 +13,8 @@ from PIL import Image
 
 Image.MAX_IMAGE_PIXELS = None
 
+OUTPUT_DIR = Path(__file__).resolve().parent / "output"
+
 DEFAULT_CROP = 768
 
 PROMPT = """You are helping quality-control a digitization project for early Islamic manuscripts.
@@ -263,8 +265,8 @@ def main():
                      help="prepare crops and report counts without calling any API")
     ap.add_argument("--ground-truth", type=Path, default=None,
                      help="CSV of known verdicts (file, verdict) to score against")
-    ap.add_argument("--output", type=Path, default=Path("ai_review.csv"), help="results CSV (default ai_review.csv)")
-    ap.add_argument("--cache-dir", type=Path, default=Path(".iiif_cache"), help="image cache for IIIF reports (default .iiif_cache)")
+    ap.add_argument("--output", type=Path, default=OUTPUT_DIR / "ai_review.csv", help="results CSV (default output/ai_review.csv)")
+    ap.add_argument("--cache-dir", type=Path, default=OUTPUT_DIR / ".iiif_cache", help="image cache for IIIF reports (default output/.iiif_cache)")
     args = ap.parse_args()
 
     rows = load_report(args.report_csv)
@@ -332,8 +334,9 @@ def main():
             print(f"  [{n}/{len(cands)}] {row['file']} vs {ref['file']}: "
                   f"{rec['ai_verdict']} ({rec['ai_confidence']}, {rec['ai_cause']})")
 
+    args.output.parent.mkdir(parents=True, exist_ok=True)
     with open(args.output, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=list(out_rows[0].keys()))
+        w = csv.DictWriter(f, fieldnames=list(out_rows[0].keys()), lineterminator="\n", quoting=csv.QUOTE_ALL)
         w.writeheader()
         w.writerows(out_rows)
 

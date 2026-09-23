@@ -4,6 +4,8 @@ Finds out-of-focus captures in digitized manuscripts. It measures the sharpness 
 
 Everything runs locally. No AI service or API is needed.
 
+All three scripts write to `output/` beside the scripts unless given an explicit path, and create it if missing. `output/` is gitignored, so results are never committed. CSVs are written as UTF-8 with no BOM, LF line endings, and all fields quoted.
+
 ## Files
 
 | File | What it's for |
@@ -39,10 +41,10 @@ Run `source .venv/bin/activate` again in each new terminal.
 python focus_check_iiif.py path/to/wellcome-b1-1-pages.csv
 ```
 
-Results go in a folder named after the CSV, in the folder you run the command from:
+Results go in a folder named after the CSV, inside `output/` beside the scripts — wherever you run the command from:
 
 ```
-wellcome-b1-1-pages/
+output/wellcome-b1-1-pages/
     report.csv
     report-manuscripts.csv
     summary.txt
@@ -51,13 +53,17 @@ wellcome-b1-1-pages/
 
 Several CSVs can be given in one command; each gets its own folder. Running the same CSV again replaces its folder. If that folder contains anything other than these results, the script stops rather than delete it.
 
+`output/` is gitignored. `--output-dir` puts the batch folders somewhere else.
+
 Downloaded images are cached in `.iiif_cache/`, so re-running (for example, after changing a setting) takes seconds, and an interrupted run picks up where it stopped.
 
 **TIFFs on disk:**
 
 ```
-python manuscript_focus_check.py path/to/collection --spot-check spot/ --output report.csv
+python manuscript_focus_check.py path/to/collection --spot-check
 ```
+
+Writes `output/focus_report.csv`, `output/focus_report-folders.csv`, and (with `--spot-check`) sheets in `output/spot/`. `--spot-check` takes an optional folder; without one it uses `output/spot`.
 
 `path/to/collection` contains one subfolder per manuscript, with that manuscript's TIFFs directly inside.
 
@@ -147,12 +153,13 @@ This is the only check for a manuscript that is soft *throughout*: every compari
 |---|---|---|
 | `--local-ratio-threshold` | 0.70 | Lower flags fewer pages; higher flags more. |
 | `--roi` | `central` | `full` measures the whole image. |
-| `--output-dir` | current folder | IIIF: where batch folders are created. |
+| `--output-dir` | `output/` | IIIF: where batch folders are created. |
+| `--output` | `output/…` | TIFF, AI review: report file. |
 | `--no-spot-check` | — | IIIF: skip the spot-check sheets. |
 | `--spot-check` | off | TIFF: folder for spot-check sheets. |
 | `--spot-check-pages` | 2 (IIIF), 3 (TIFF) | Ordinary pages per sheet. |
 | `--workers` | 6 (IIIF) | Simultaneous downloads. |
-| `--cache-dir` | `.iiif_cache` | IIIF image cache. |
+| `--cache-dir` | `output/.iiif_cache` | IIIF image cache, shared by both IIIF-based scripts. |
 | `--skip-first`, `--skip-last` | 0 | TIFF, bare-sequence items: covers at each end. |
 
 Run either script with `--help` for the full list.

@@ -28,6 +28,8 @@ from manuscript_focus_check import (
 
 Image.MAX_IMAGE_PIXELS = None
 
+OUTPUT_DIR = Path(__file__).resolve().parent / "output"
+
 COVER_TITLE_RE = re.compile(
     r"(?i)^\s*(front cover|back cover|spine|fore ?edge|head|tail)\s*$")
 
@@ -206,13 +208,13 @@ def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("csvs", nargs="+", type=Path, help="one or more Pages CSV exports")
-    ap.add_argument("--output-dir", type=Path, default=Path("."), help="where each batch's results folder is created (default: current folder)")
+    ap.add_argument("--output-dir", type=Path, default=OUTPUT_DIR, help="where each batch's results folder is created (default output/)")
     ap.add_argument("--size", type=int, default=1200,
                      help="requested image width in pixels, capped at native width (default 1200)")
     ap.add_argument("--roi", choices=["central", "full"], default="central",
                      help="measure the central text block (default) or the whole image")
-    ap.add_argument("--cache-dir", type=Path, default=Path(".iiif_cache"),
-                     help="image cache; re-runs reuse it (default .iiif_cache)")
+    ap.add_argument("--cache-dir", type=Path, default=OUTPUT_DIR / ".iiif_cache",
+                     help="image cache; re-runs reuse it (default output/.iiif_cache)")
     ap.add_argument("--workers", type=int, default=6,
                      help="concurrent downloads (default 6)")
     ap.add_argument("--local-window", type=int, default=1, help="neighbours on each side for the local comparison (default 1)")
@@ -368,12 +370,12 @@ def run_batch(args, roi, csv_path):
     out_rows.sort(key=lambda r: (r["manuscript"], int(r["sequence"] or 0)))
     fields = list(out_rows[0].keys())
     with open(args.output, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=fields)
+        w = csv.DictWriter(f, fieldnames=fields, lineterminator="\n", quoting=csv.QUOTE_ALL)
         w.writeheader()
         w.writerows(out_rows)
     summary_path = args.output.with_name(args.output.stem + "-manuscripts.csv")
     with open(summary_path, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=list(summaries[0].keys()))
+        w = csv.DictWriter(f, fieldnames=list(summaries[0].keys()), lineterminator="\n", quoting=csv.QUOTE_ALL)
         w.writeheader()
         w.writerows(summaries)
 

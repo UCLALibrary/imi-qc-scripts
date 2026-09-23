@@ -12,6 +12,8 @@ from scipy.ndimage import laplace
 
 Image.MAX_IMAGE_PIXELS = None
 
+OUTPUT_DIR = Path(__file__).resolve().parent / "output"
+
 RESIZE_MAX_DIM = 1500
 TIFF_GLOB_PATTERNS = ("*.tif", "*.tiff", "*.TIF", "*.TIFF")
 
@@ -313,7 +315,7 @@ def main():
     )
     ap.add_argument("collection_dir", type=Path,
                      help="folder containing one subfolder per manuscript")
-    ap.add_argument("--output", type=Path, default=Path("focus_report.csv"), help="page report CSV (default focus_report.csv)")
+    ap.add_argument("--output", type=Path, default=OUTPUT_DIR / "focus_report.csv", help="page report CSV (default output/focus_report.csv)")
     ap.add_argument("--cover-segments", type=str, default="a,z",
                      help="segment codes treated as cover/exterior in coded items (default a,z)")
     ap.add_argument("--skip-first", type=int, default=0,
@@ -339,8 +341,8 @@ def main():
     ap.add_argument("--color-threshold", type=float, default=2.5,
                      help="cutoff for --color-check (default 2.5)")
     ap.add_argument("--workers", type=int, default=max(1, cpu_count() - 1), help="parallel processes (default: CPUs - 1)")
-    ap.add_argument("--spot-check", type=Path, default=None,
-                     help="write spot-check sheets to this folder")
+    ap.add_argument("--spot-check", type=Path, nargs="?", const=OUTPUT_DIR / "spot", default=None,
+                     help="write spot-check sheets (default folder output/spot)")
     ap.add_argument("--spot-check-pages", type=int, default=3,
                      help="ordinary pages per spot-check sheet (default 3)")
     ap.add_argument("--spot-check-crop", type=int, default=768,
@@ -563,12 +565,13 @@ def main():
         r["folder"], r["group"], r["file"],
     ))
 
-    with open(args.output, "w", newline="") as f:
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    with open(args.output, "w", newline="", encoding="utf-8") as f:
         fieldnames = ["folder", "group", "file", "path", "sharpness_score", "group_median",
                       "group_mad", "modified_z", "local_neighbour_ref", "local_ratio",
                       "flagged_possibly_out_of_focus", "flag_reason", "page_note",
                       "excluded_reason", "error", "color_distance", "color_note"]
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=fieldnames, lineterminator="\n", quoting=csv.QUOTE_ALL)
         writer.writeheader()
         writer.writerows(rows)
 
@@ -632,11 +635,12 @@ def main():
         summary_path = args.folder_summary_output
         if summary_path is None:
             summary_path = args.output.with_name(args.output.stem + "-folders.csv")
-        with open(summary_path, "w", newline="") as f:
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(summary_path, "w", newline="", encoding="utf-8") as f:
             fieldnames = ["folder", "content_pages_scored", "content_median_sharpness",
                           "batch_baseline_median", "ratio_to_baseline",
                           "flagged_systematically_soft", "side_pattern", "side_pattern_detail"]
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer = csv.DictWriter(f, fieldnames=fieldnames, lineterminator="\n", quoting=csv.QUOTE_ALL)
             writer.writeheader()
             writer.writerows(folder_rows)
 
