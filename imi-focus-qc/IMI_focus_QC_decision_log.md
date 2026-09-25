@@ -329,6 +329,26 @@ Immediate neighbours with a median gives the cleanest separation and an empty ga
 
 ---
 
+### D18. TIFF tool brought in line with the IIIF tool; covers kept with the pages on uncoded items
+**Why now.** The first real TIFF runs (Molly, thumb drive and NetApp) showed the TIFF tool had fallen behind: spot-check off by default, loose output files, no `summary.txt`, three spot-check pages chosen regardless of side.
+
+**Two apparent bugs were the thumb drive, not the code.** On the drive, one manuscript produced 130 read errors and neither manuscript got a spot-check sheet; the same files on NetApp — copied *from* that drive — read without a single error. The errors were `[Errno 2] No such file or directory` for files the tool had just listed, and persisted with `--workers 1`, which rules out concurrency. That is the signature of the drive disconnecting mid-run (macOS may remount it under a new name, so the old path vanishes). The missing sheets followed from it: the pages picked for the sheets were among the unreadable ones. The tool now counts files that disappear after listing and prints a plain warning that the drive or share probably disconnected, instead of dozens of identical errors; the README suggests `caffeinate -m`, a direct port, and a different cable.
+
+**Parity changes (TIFF tool):** results in `output/<collection-folder>/` with `report.csv`, `report-manuscripts.csv` (renamed from `<output>-folders.csv`), `summary.txt` and `spot/`, overwritten on rerun under the same guard as the IIIF tool; spot-check sheets by default (`--no-spot-check` to skip; `--spot-check` still accepted so older commands work); one ordinary page per side of the opening plus every fragment on the same sheet; the printed summary in the IIIF tool's per-manuscript format. The cross-folder check only prints when enabled.
+
+**Cover handling on uncoded items (the hybrid).** Asking the vendor or reviewers to state cover counts per manuscript isn't realistic. Three approaches were weighed:
+1. *Classify covers from pixels*, as the IIIF tool does (dark end-runs). Rejected for the TIFF tool: pilot bindings 833/13 (yellow fabric) and 833/18 (green cloth) measured ~0.7× page brightness, not dark enough for the rule — they were distinct by colour saturation instead, and a combined colour rule would rest on a handful of bindings.
+2. *Don't classify covers at all; annotate the ends.* A cover left among the pages costs one or two noisy pairs in a side analysis of 30–200, and a spurious flag or two at the ends.
+3. *Hybrid* — chosen: segment codes where present; exterior strips (spine, edges) set aside by shape, which needs only the image dimensions from the TIFF header; everything else treated as pages. Flags in the first or last three pages are noted "near the start/end of the item — may be a cover, pastedown or flyleaf," and still count as needing review, since a genuinely soft first page happens (ms0503 p_01 scored 0.18).
+
+The reviewer's point that settled it: many manuscripts have no binding at all, so for them every image is a page, and any cover-guessing rule could only misfile one. The failure mode of the hybrid is a flag you dismiss, rather than a page silently treated as a cover and never checked.
+
+**The IIIF tool is unchanged**, including its darkness-based cover rule; the near-the-ends note is off there. The two tools therefore group covers differently on uncoded items — a known, deliberate difference. `--skip-first` / `--skip-last` remain available in the TIFF tool as an optional override.
+
+**First TIFF results (NetApp, uclalsc_1147):** ms0503 systematic, odd 0.69× (96% of 24 pairs); ms0893 mild, odd 0.82× (95% of 37 pairs) — the recto pattern in a fourth collection. ms0503's 19 blank-tagged pages form runs at both ends (blank flyleaves), consistent with the blank rule rather than a threshold misfire. These files use a `p` segment code for pages, which the tool doesn't list among its known codes; they fall through to the page group, which is correct, but sides then come from sequence parity rather than the filename. Confirmed with the project: `p` is the paginated counterpart of `f`, and it is now a recognized code handled the same way. The practical difference is that an item named only with `p` codes is read as segment-coded rather than bare-sequence; sides still come from sequence parity, since page numbers carry no recto/verso marker.
+
+---
+
 ## Known limitations
 
 1. **A uniformly out-of-focus manuscript can still pass automated detection.** Both the local and folder-wide comparisons are relative, so if everything is equally soft, nothing stands out. D8 was the attempted automated fix and it failed on real data. **Mitigated by D10** — the spot-check sheets put a human absolute judgement in the loop — but not solved automatically, and the mitigation depends on the reviewer actually looking at the sheets.

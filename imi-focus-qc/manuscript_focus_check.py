@@ -2,7 +2,9 @@
 import argparse
 import csv
 import re
+import shutil
 import sys
+from datetime import datetime
 from pathlib import Path
 from multiprocessing import Pool, cpu_count
 
@@ -17,7 +19,7 @@ OUTPUT_DIR = Path(__file__).resolve().parent / "output"
 RESIZE_MAX_DIM = 1500
 TIFF_GLOB_PATTERNS = ("*.tif", "*.tiff", "*.TIF", "*.TIFF")
 
-KNOWN_SEGMENTS = {"a", "b", "f", "y", "z"}
+KNOWN_SEGMENTS = {"a", "b", "f", "p", "y", "z"}
 FRAG_RE = re.compile(r"(?i)^frag\d+[rv]?$")
 
 
@@ -117,6 +119,18 @@ def find_tiffs_in_folder(folder: Path):
     return sorted(unique, key=lambda p: natural_sort_key(p.name))
 
 
+EXTERIOR_ASPECT = 2.5
+
+
+def is_strip(path):
+    try:
+        with Image.open(path) as im:
+            w, h = im.size
+    except Exception:
+        return False
+    return min(w, h) > 0 and max(w, h) / min(w, h) > EXTERIOR_ASPECT
+
+
 def classify_folder(pages, cover_segments, exclude_re, skip_first, skip_last):
     segments = {p: parse_segment_and_position(p) for p in pages}
     structured = any(seg is not None for p, (seg, _pos) in segments.items()
@@ -152,10 +166,11 @@ def classify_folder(pages, cover_segments, exclude_re, skip_first, skip_last):
                         groups["cover"].append(p)
                 else:
                     groups["cover"].append(p)
+            elif is_strip(p):
+                groups.setdefault("exterior", []).append(p)
             else:
                 groups["content"].append(p)
-        mode = ("structured (segment-code naming) -- covers vs covers, pages vs pages; "
-                "inside front/back cover positions folded into content")
+        mode = "segment-coded"
     else:
         for i, p in enumerate(pages):
             if exclude_re and exclude_re.search(p.name):
@@ -168,12 +183,12 @@ def classify_folder(pages, cover_segments, exclude_re, skip_first, skip_last):
                 continue
             if (skip_first and i < skip_first) or (skip_last and i >= n - skip_last):
                 groups["cover"].append(p)
+            elif is_strip(p):
+                groups.setdefault("exterior", []).append(p)
             else:
                 groups["content"].append(p)
-        if skip_first or skip_last:
-            mode = "bare-sequence (positional head/tail = cover group)"
-        else:
-            mode = "bare-sequence (no head/tail configured -- single group)"
+        mode = ("bare-sequence, covers set by --skip-first/--skip-last" if skip_first or skip_last
+                else "bare-sequence, covers kept with the pages")
 
     groups = {k: v for k, v in groups.items() if v}
     excluded_set = set(excluded)
@@ -214,7 +229,7 @@ def local_neighbour_ratios(ordered_paths, score_by_path, window):
 
 
 def make_spot_check_sheet(folder_name, ordered_paths, score_by_path, local_map,
-                           output_dir: Path, n_pages, crop_px, role=None):
+                           output_dir: Path, n_pages, crop_px, role=None, roles=None):
     scored = [(p, local_map.get(str(p), (None, None))[1]) for p in ordered_paths]
     scored = [(p, r) for p, r in scored if r is not None]
     if not scored:
@@ -256,7 +271,8 @@ def make_spot_check_sheet(folder_name, ordered_paths, score_by_path, local_map,
     for i, (p, ratio, crop) in enumerate(tiles):
         cx = (i % cols) * tile_w
         cy = (i // cols) * (tile_h + label_h)
-        label = f"{p.name}  {role}" if role else f"{p.name}  local_ratio={ratio:.2f}"
+        tile_role = (roles or {}).get(str(p), role)
+        label = f"{p.name}  {tile_role}" if tile_role else f"{p.name}  local_ratio={ratio:.2f}"
         draw.text((cx + 4, cy + 6), label, fill="black", font=font)
         sheet.paste(crop, (cx, cy + label_h))
 
@@ -309,13 +325,27 @@ def make_contact_sheet(flagged_path: Path, folder_pages, output_dir: Path, label
     sheet.save(output_dir / out_name, quality=85)
 
 
+NEAR_ENDS = 3
+RESULT_NAMES = {"report.csv", "report-manuscripts.csv", "summary.txt", "spot"}
+
+
+def prepare_dir(d):
+    if d.exists():
+        other = {p.name for p in d.iterdir() if not p.name.startswith(".")} - RESULT_NAMES
+        if other:
+            raise SystemExit(f"{d} already exists and contains other files "
+                             f"({', '.join(sorted(other))}); not overwriting.")
+        shutil.rmtree(d)
+    d.mkdir(parents=True)
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument("collection_dir", type=Path,
                      help="folder containing one subfolder per manuscript")
-    ap.add_argument("--output", type=Path, default=OUTPUT_DIR / "focus_report.csv", help="page report CSV (default output/focus_report.csv)")
+    ap.add_argument("--output-dir", type=Path, default=OUTPUT_DIR, help="where the batch results folder is created (default output/)")
     ap.add_argument("--cover-segments", type=str, default="a,z",
                      help="segment codes treated as cover/exterior in coded items (default a,z)")
     ap.add_argument("--skip-first", type=int, default=0,
@@ -341,10 +371,9 @@ def main():
     ap.add_argument("--color-threshold", type=float, default=2.5,
                      help="cutoff for --color-check (default 2.5)")
     ap.add_argument("--workers", type=int, default=max(1, cpu_count() - 1), help="parallel processes (default: CPUs - 1)")
-    ap.add_argument("--spot-check", type=Path, nargs="?", const=OUTPUT_DIR / "spot", default=None,
-                     help="write spot-check sheets (default folder output/spot)")
-    ap.add_argument("--spot-check-pages", type=int, default=3,
-                     help="ordinary pages per spot-check sheet (default 3)")
+    ap.add_argument("--spot-check", action="store_true", help="accepted for older commands; sheets are made by default")
+    ap.add_argument("--no-spot-check", action="store_true", help="skip the spot-check sheets")
+    ap.add_argument("--spot-check-pages", type=int, default=2, help="ordinary pages per sheet, one per side (default 2)")
     ap.add_argument("--spot-check-crop", type=int, default=768,
                      help="crop size in pixels for spot-check tiles (default 768)")
     ap.add_argument("--contact-sheets", type=Path, default=None,
@@ -353,8 +382,6 @@ def main():
                      help="flag items whose median is below this fraction of the batch median (default 0 = off)")
     ap.add_argument("--folder-ratio-min-folders", type=int, default=4,
                      help="minimum items before --folder-ratio-threshold applies (default 4)")
-    ap.add_argument("--folder-summary-output", type=Path, default=None,
-                     help="per-manuscript summary CSV (default <output>-folders.csv)")
     args = ap.parse_args()
     roi = ROI_CENTRAL if args.roi == "central" else None
 
@@ -460,7 +487,7 @@ def main():
             folder_content_median[folder_name] = median
             folder_content_count[folder_name] = len(scored)
 
-        active_threshold = cover_threshold if group_name == "cover" else args.threshold
+        active_threshold = cover_threshold if group_name in ("cover", "exterior") else args.threshold
 
         score_by_path = {p: sc for p, sc in scored}
         local_map = {}
@@ -540,7 +567,7 @@ def main():
         pages = []
         for r in frows:
             seg, pos = parse_segment_and_position(Path(r["path"]))
-            tok = f"{seg}_{pos}" if seg in ("b", "f", "y") and pos else (
+            tok = f"{seg}_{pos}" if seg in ("b", "f", "p", "y") and pos else (
                 Path(r["path"]).stem.split("_")[-1] if seg == "frag" else None)
             pages.append({"id": r["path"], "seq": index_of.get(r["path"], 0),
                           "score": float(r["sharpness_score"]),
@@ -550,7 +577,7 @@ def main():
                           "local_ratio": float(r["local_ratio"]) if r.get("local_ratio") not in ("", None) else None,
                           "pos": tok, "group": r["group"], 
                           "local_flag": "local" in (r.get("flag_reason") or "")})
-        pat, notes = manuscript_level(pages)
+        pat, notes = manuscript_level(pages, near_ends=NEAR_ENDS)
         ms_patterns[folder_name] = pat
         for r in frows:
             r["page_note"] = notes.get(r["path"], "")
@@ -565,8 +592,11 @@ def main():
         r["folder"], r["group"], r["file"],
     ))
 
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    with open(args.output, "w", newline="", encoding="utf-8") as f:
+    batch = args.collection_dir.resolve().name
+    out_dir = args.output_dir / batch
+    prepare_dir(out_dir)
+
+    with open(out_dir / "report.csv", "w", newline="", encoding="utf-8") as f:
         fieldnames = ["folder", "group", "file", "path", "sharpness_score", "group_median",
                       "group_mad", "modified_z", "local_neighbour_ref", "local_ratio",
                       "flagged_possibly_out_of_focus", "flag_reason", "page_note",
@@ -575,123 +605,121 @@ def main():
         writer.writeheader()
         writer.writerows(rows)
 
-    print("\nManuscript-level side patterns (read these before the page flags):")
-    for name in sorted(ms_patterns):
-        pat = ms_patterns[name]
-        print(f"  {name}: {describe_side_pattern(pat) if pat else 'not assessed'}")
-    n_explained = sum(1 for r in rows if r["page_note"].startswith("one instance"))
-    n_lift = sum(1 for r in rows if "possible lift" in r["page_note"])
-    n_blank = sum(1 for r in rows if r["page_note"].startswith("likely blank"))
+    baseline = float(np.median(list(folder_content_median.values()))) if folder_content_median else None
+    check_enabled = (args.folder_ratio_threshold > 0
+                     and len(folder_content_median) >= args.folder_ratio_min_folders)
+    summaries = []
+    for name in sorted(folder_groups):
+        recs = [r for r in rows if r["folder"] == name]
+        flagged = [r for r in recs if r["flagged_possibly_out_of_focus"] == "YES"]
+        med = folder_content_median.get(name)
+        ratio = (med / baseline) if (med is not None and baseline) else None
+        missing = sum(1 for r in recs if "No such file or directory" in r["error"])
+        summaries.append({
+            "manuscript": name,
+            "images": len(recs),
+            "covers": sum(1 for r in recs if r["group"] == "cover"),
+            "exterior": sum(1 for r in recs if r["group"] == "exterior"),
+            "content": sum(1 for r in recs if r["group"] == "content"),
+            "likely_blank": sum(1 for r in recs if r["page_note"].startswith("likely blank")),
+            "fragments_for_visual_check": sum(1 for r in recs if r["group"] == "fragment"),
+            "inserts": sum(1 for r in recs if r["group"] == "insert"),
+            "side_pattern": (ms_patterns.get(name) or {}).get("verdict", ""),
+            "side_pattern_detail": describe_side_pattern(ms_patterns[name]) if ms_patterns.get(name) else "",
+            "flags": len(flagged),
+            "flags_explained_by_pattern": sum(1 for r in flagged if r["page_note"].startswith("one instance")),
+            "flags_on_blank_pages": sum(1 for r in flagged if r["page_note"].startswith("likely blank")),
+            "flags_needing_individual_review": sum(1 for r in flagged if needs_review(r["page_note"])),
+            "possible_lift_or_tilt": sum(1 for r in flagged if "possible lift" in r["page_note"]),
+            "near_start_or_end": sum(1 for r in flagged if r["page_note"].startswith("near the")),
+            "read_errors": sum(1 for r in recs if r["error"]),
+            "missing_during_run": missing,
+            "content_median_sharpness": round(med, 2) if med is not None else "",
+            "batch_baseline_median": round(baseline, 2) if baseline else "",
+            "ratio_to_baseline": round(ratio, 3) if ratio is not None else "",
+            "flagged_systematically_soft": "YES" if (check_enabled and ratio is not None
+                                                     and ratio < args.folder_ratio_threshold) else "",
+        })
+    with open(out_dir / "report-manuscripts.csv", "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(summaries[0].keys()), lineterminator="\n",
+                                quoting=csv.QUOTE_ALL)
+        writer.writeheader()
+        writer.writerows(summaries)
 
-    n_flagged = sum(1 for r in rows if r["flagged_possibly_out_of_focus"] == "YES")
-    n_local = sum(1 for r in rows if "local" in (r.get("flag_reason") or ""))
-    n_globalonly = sum(1 for r in rows if r.get("flag_reason") == "folder-outlier")
-    n_errors = sum(1 for r in rows if r["error"])
-    n_color_notes = sum(1 for r in rows if r["color_note"])
-    print(f"\nDone. {n_flagged} pages flagged as possible focus problems, {n_errors} read errors.")
-    if not args.disable_local:
-        print(f"  {n_local} flagged by local neighbour comparison "
-              f"(< {args.local_ratio_threshold:.2f} of neighbour median)")
-    print(f"  {n_globalonly} flagged by folder-wide outlier test only")
-    print(f"  {n_explained} of the flags are instances of a manuscript-level pattern; "
-          f"{n_blank} pages tagged as likely blank")
-    n_indep = sum(1 for r in rows if r["flagged_possibly_out_of_focus"] == "YES"
-                  and needs_review(r["page_note"]))
-    print(f"  {n_indep} flags remain that need individual review"
-          + (f" ({n_lift} look like a possible lift or tilt)" if n_lift else ""))
-    if args.color_check:
-        print(f"{n_color_notes} content-group pages flagged for color-distinctiveness review.")
+    lines = ["\nManuscript-level results (read these before the page flags):"]
+    for sm in summaries:
+        lines.append(f"\n  {sm['manuscript']}: {sm['images']} images "
+                     f"({sm['covers']} cover, {sm['exterior']} exterior, {sm['content']} content, "
+                     f"{sm['likely_blank']} likely blank, {sm['fragments_for_visual_check']} fragments, "
+                     f"{sm['inserts']} inserts)")
+        lines.append(f"    side pattern: {sm['side_pattern_detail'] or 'not assessed'}")
+        lines.append(f"    {sm['flags']} page flags: {sm['flags_explained_by_pattern']} explained by the "
+                     f"pattern, {sm['flags_on_blank_pages']} on blank pages, "
+                     f"{sm['flags_needing_individual_review']} need individual review"
+                     + (f" ({sm['near_start_or_end']} near the start or end)" if sm["near_start_or_end"] else "")
+                     + (f" ({sm['possible_lift_or_tilt']} possible lift or tilt)" if sm["possible_lift_or_tilt"] else "")
+                     + (f"; {sm['read_errors']} read errors" if sm["read_errors"] else ""))
+        if sm["missing_during_run"]:
+            lines.append(f"    WARNING: {sm['missing_during_run']} files disappeared after being listed. The "
+                         f"drive or share probably disconnected during the run, so this manuscript's "
+                         f"results are incomplete.")
+    if check_enabled:
+        low = [sm for sm in summaries if sm["flagged_systematically_soft"]]
+        lines.append(f"\nCross-folder check: {len(low)} manuscript(s) below "
+                     f"{args.folder_ratio_threshold:.0%} of the batch median")
+    for line in lines:
+        print(line)
+    header = [f"{batch} - {sum(sm['images'] for sm in summaries)} images across "
+              f"{len(summaries)} manuscripts",
+              f"run {datetime.now().strftime('%Y-%m-%d %H:%M')}"]
+    (out_dir / "summary.txt").write_text("\n".join(header + lines) + "\n", encoding="utf-8")
 
-    print(f"Report: {args.output}")
-
-    folder_rows = []
-    baseline = None
-    n_folder_flagged = 0
-
-    if folder_content_median:
-        medians = list(folder_content_median.values())
-        enough_folders = len(medians) >= args.folder_ratio_min_folders
-        check_enabled = args.folder_ratio_threshold > 0 and enough_folders
-        baseline = float(np.median(medians))
-
-        for name in sorted(folder_content_median):
-            med = folder_content_median[name]
-            ratio = (med / baseline) if baseline else None
-            flagged_folder = bool(check_enabled and ratio is not None
-                                   and ratio < args.folder_ratio_threshold)
-            if flagged_folder:
-                n_folder_flagged += 1
-            folder_rows.append({
-                "folder": name,
-                "content_pages_scored": folder_content_count.get(name, ""),
-                "content_median_sharpness": round(med, 2),
-                "batch_baseline_median": round(baseline, 2),
-                "ratio_to_baseline": round(ratio, 3) if ratio is not None else "",
-                "flagged_systematically_soft": "YES" if flagged_folder else "",
-                "side_pattern": (ms_patterns.get(name) or {}).get("verdict", ""),
-                "side_pattern_detail": describe_side_pattern(ms_patterns[name]) if ms_patterns.get(name) else "",
-            })
-
-        summary_path = args.folder_summary_output
-        if summary_path is None:
-            summary_path = args.output.with_name(args.output.stem + "-folders.csv")
-        summary_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(summary_path, "w", newline="", encoding="utf-8") as f:
-            fieldnames = ["folder", "content_pages_scored", "content_median_sharpness",
-                          "batch_baseline_median", "ratio_to_baseline",
-                          "flagged_systematically_soft", "side_pattern", "side_pattern_detail"]
-            writer = csv.DictWriter(f, fieldnames=fieldnames, lineterminator="\n", quoting=csv.QUOTE_ALL)
-            writer.writeheader()
-            writer.writerows(folder_rows)
-
-        print(f"\nCross-folder check: batch baseline (median of folder medians) = "
-              f"{baseline:.2f}")
-        if not enough_folders:
-            print(f"  Skipped flagging: only {len(medians)} folder(s) with content statistics, "
-                  f"need >= {args.folder_ratio_min_folders} for a meaningful batch baseline.")
-        elif args.folder_ratio_threshold <= 0:
-            print("  Flagging disabled (--folder-ratio-threshold 0).")
-        elif n_folder_flagged:
-            print(f"  {n_folder_flagged} folder(s) below {args.folder_ratio_threshold:.0%} of "
-                  f"baseline -- possible whole-item/session focus problem:")
-            for fr in folder_rows:
-                if fr["flagged_systematically_soft"]:
-                    print(f"    {fr['folder']}: median {fr['content_median_sharpness']} "
-                          f"({fr['ratio_to_baseline']:.2f}x baseline)")
-        else:
-            print(f"  No folders below {args.folder_ratio_threshold:.0%} of baseline.")
-        print(f"  Folder summary: {summary_path}")
-
-    if args.spot_check:
-        written = 0
-        for folder_name, groups in folder_groups.items():
-            ordered = groups.get("content", [])
-            lm = local_by_folder.get(folder_name, {})
+    made = 0
+    if not args.no_spot_check:
+        spot_dir = out_dir / "spot"
+        blank = {r["path"] for r in rows if r["page_note"].startswith("likely blank")}
+        skipped = []
+        for folder_name in sorted(folder_groups):
+            groups = folder_groups[folder_name]
+            order = folder_scored_order.get(folder_name, [])
+            index_of = {str(pp): i + 1 for i, pp in enumerate(order)}
             sb = scores_by_folder.get(folder_name, {})
-            if not ordered or not lm:
-                continue
-            out = make_spot_check_sheet(folder_name, ordered, sb, lm, args.spot_check,
-                                         args.spot_check_pages, args.spot_check_crop)
-            if out:
-                written += 1
+            cands = [pp for pp in groups.get("content", []) if str(pp) in sb and str(pp) not in blank]
+            picks = []
+            for parity in (1, 0):
+                side = [pp for pp in cands if index_of.get(str(pp), 0) % 2 == parity]
+                if side:
+                    m = float(np.median([sb[str(pp)] for pp in side]))
+                    picks.append(min(side, key=lambda pp: abs(sb[str(pp)] - m)))
+            picks = picks[:max(1, args.spot_check_pages)]
+            roles = {str(pp): f"ordinary {'odd' if index_of.get(str(pp), 0) % 2 else 'even'} page"
+                     for pp in picks}
             frags = groups.get("fragment", [])
-            if frags:
-                make_spot_check_sheet(f"FRAGMENTS__{folder_name}", frags, {},
-                                      {str(fp): (None, 1.0) for fp in frags},
-                                      args.spot_check, len(frags), args.spot_check_crop,
-                                      role="fragment - judge focus directly")
-        print(f"\nSpot-check sheets: {written} written to {args.spot_check}/"
-              f" (plus a FRAGMENTS sheet for any item with fragments)")
-        print("  These show ORDINARY pages, not flagged ones. If they look soft to you, the")
-        print("  whole manuscript may be out of focus -- a relative check cannot detect that.")
+            for fp in frags:
+                roles[str(fp)] = "fragment - judge focus directly"
+            tiles = picks + frags
+            if not tiles:
+                skipped.append(f"{folder_name}: no readable pages to show")
+                continue
+            if make_spot_check_sheet(folder_name, tiles, {}, {str(t): (None, 1.0) for t in tiles},
+                                     spot_dir, len(tiles), args.spot_check_crop, roles=roles):
+                made += 1
+            else:
+                skipped.append(f"{folder_name}: could not open any of the pages chosen for the sheet")
+        print(f"\nSpot-check sheets: {made} written to {spot_dir}/")
+        for line in skipped:
+            print(f"  no sheet for {line}")
+        print("  One ORDINARY page from each side of the opening, plus every fragment, at native")
+        print("  resolution. If both look soft, the whole item may be out of focus.")
 
     if args.contact_sheets and flagged_paths:
         print(f"Writing {len(flagged_paths)} contact sheets to {args.contact_sheets}/ ...")
         for path, folder_name in flagged_paths:
             make_contact_sheet(path, folder_scored_order[folder_name], args.contact_sheets,
                                 all_scores_by_path)
-        print("Contact sheets done.")
 
+    print(f"\nResults in {out_dir}/: report.csv, report-manuscripts.csv, summary.txt"
+          + ("" if args.no_spot_check else ", spot/"))
 
 SIDE_SYSTEMATIC = 0.80
 SIDE_CONSISTENT = 0.70
@@ -862,7 +890,7 @@ def _uneven(page, same_side):
             f"- possible lift or tilt rather than focus")
 
 
-def manuscript_level(pages):
+def manuscript_level(pages, near_ends=0):
     content = [p for p in pages if p["group"] == "content" and p["score"] is not None]
     if len(content) < 6:
         return None, {}
@@ -908,6 +936,16 @@ def manuscript_level(pages):
         lift = _uneven(p, [q for q in usable if side_of[q["id"]] == side])
         if lift:
             notes[p["id"]] = f"{notes[p['id']]}; {lift}" if p["id"] in notes else lift
+    if near_ends:
+        ordered = sorted(content, key=lambda p: p["seq"])
+        for i, p in enumerate(ordered):
+            if not p["local_flag"] or not needs_review(notes.get(p["id"], "")):
+                continue
+            where = ("start" if i < near_ends else
+                     "end" if i >= len(ordered) - near_ends else None)
+            if where:
+                end_note = f"near the {where} of the item - may be a cover, pastedown or flyleaf"
+                notes[p["id"]] = f"{end_note}; {notes[p['id']]}" if notes.get(p["id"]) else end_note
     return pat, notes
 
 if __name__ == "__main__":

@@ -60,18 +60,18 @@ Downloaded images are cached in `output/.iiif_cache/`, so re-running (for exampl
 **TIFFs on disk:**
 
 ```
-python manuscript_focus_check.py path/to/collection --spot-check
+python manuscript_focus_check.py path/to/uclalsc_1147
 ```
 
-Writes `output/focus_report.csv`, `output/focus_report-folders.csv`, and (with `--spot-check`) sheets in `output/spot/`. `--spot-check` takes an optional folder; without one it uses `output/spot`.
+`path/to/uclalsc_1147` contains one subfolder per manuscript, with that manuscript's TIFFs directly inside. Results go in a folder named after it, `output/uclalsc_1147/`, with the same four items as the IIIF tool. Rerunning replaces it, under the same rule.
 
-`path/to/collection` contains one subfolder per manuscript, with that manuscript's TIFFs directly inside.
+If you're reading from a USB drive and the summary warns that files **disappeared after being listed**, the drive disconnected partway through the run. Try a different port or cable, plug in directly rather than through a hub, and start the command with `caffeinate -m` so the disk doesn't sleep: `caffeinate -m python manuscript_focus_check.py …`
 
 ## Input
 
 **IIIF:** a Pages CSV with these columns: `Parent ARK`, `Item Sequence`, `Title`, `File Name`, `IIIF Access URL`, `media.width`, `media.height`. Each Parent ARK is treated as one manuscript. Several CSVs can be given at once.
 
-**TIFF:** filenames following the IMI convention, either segment-coded (`uclalsc_0833_ms0010_0005_f_1r.tif`) or bare-sequence (`uclalsc_1148_ms0005_0012.tif`). For bare-sequence items, use `--skip-first` and `--skip-last` to say how many images at each end are covers and exterior shots.
+**TIFF:** filenames following the IMI convention, either segment-coded (`…_0005_f_1r.tif` for foliated items, `…_0005_p_03.tif` for paginated ones) or bare-sequence (`uclalsc_1148_ms0005_0012.tif`). Bare-sequence items need no extra options; see [What it does](#what-it-does).
 
 ## What it does
 
@@ -81,7 +81,7 @@ Writes `output/focus_report.csv`, `output/focus_report-folders.csv`, and (with `
    - *inserts* (bookmarks, loose notes) — left out and not checked
    - *content* — everything else; this is where focus is assessed
 
-   The IIIF tool uses titles where they're informative ("Front cover", "Spine", "Fragment 1r", "Insert 2"). Where they aren't (e.g. "Image 12"), it identifies exterior shots by shape (long thin strips) and covers by being much darker than the pages. The TIFF tool uses segment codes, or `--skip-first` / `--skip-last` for bare-sequence items. A title of "Insert" overrides a `frag` filename.
+   The IIIF tool uses titles where they're informative ("Front cover", "Spine", "Fragment 1r", "Insert 2"). Where they aren't (e.g. "Image 12"), it identifies exterior shots by shape (long thin strips) and covers by being much darker than the pages. The TIFF tool uses segment codes where the filenames have them. Where they don't, it sets aside exterior shots by shape and keeps covers with the pages: a cover then usually shows up as a flag in the first or last three pages, noted as possibly a cover, pastedown or flyleaf. That also suits manuscripts with no binding, where every image is a page. `--skip-first` / `--skip-last` can still mark a number of images at each end as covers if you prefer. A title of "Insert" overrides a `frag` filename.
 
 2. **Measures sharpness** of the central text block of each image, leaving out the margins, gutter, and page-edge stacks, which would otherwise distort the score. Use `--roi full` to measure the whole image.
 
@@ -97,7 +97,7 @@ Read in this order.
 
 ### 1. The manuscript summary
 
-Printed at the end of the run. The IIIF tool saves the printed text as `summary.txt`, and the same figures as `report-manuscripts.csv`; the TIFF tool saves `<output>-folders.csv`. One line per manuscript, with a side-pattern verdict:
+Printed at the end of the run. Both tools save the printed text as `summary.txt`, and the same figures as `report-manuscripts.csv`. One line per manuscript, with a side-pattern verdict:
 
 | Verdict | Meaning |
 |---|---|
@@ -111,7 +111,7 @@ The line also shows the range across the book and the stretch where it's stronge
 
 ### 2. The page report
 
-`report.csv` (IIIF) or the `--output` file (TIFF), one row per image. The flags worth looking at are those with `flagged_possibly_out_of_focus = YES` whose `page_note` is empty or is one of the "look at this" notes below. The summary gives the count as "need individual review".
+`report.csv`, one row per image. The flags worth looking at are those with `flagged_possibly_out_of_focus = YES` whose `page_note` is empty or is one of the "look at this" notes below. The summary gives the count as "need individual review".
 
 `page_note` values:
 
@@ -119,6 +119,7 @@ The line also shows the range across the book and the stretch where it's stronge
 |---|---|
 | *(empty)* | Needs looking at. |
 | `much softer than the side pattern (…)` | On the soft side, but well beyond the pattern (below 0.70 of it). Needs looking at. |
+| `near the start/end of the item - may be a cover, pastedown or flyleaf` | TIFF tool: flagged, and within the first or last three pages. Usually a cover or blank leaf; worth a glance, since a genuinely soft first page does happen. |
 | `softness uneven across the page (softest at …)` | Part of the page is much softer than the rest, compared with other pages on the same side. Suggests the page lifted or tilted rather than a focus error. Needs looking at. |
 | `one instance of the manuscript-level side pattern` | This page is soft because of the side pattern; deal with the pattern rather than the page. |
 | `likely blank page …` | Little or no writing, so a low score isn't a focus problem. |
@@ -129,9 +130,9 @@ Other useful columns: `local_ratio` (sharpness as a fraction of the neighbours),
 
 ### 3. The spot-check sheets
 
-One image per manuscript in the `spot/` folder. The IIIF tool makes these by default; the TIFF tool makes them with `--spot-check <folder>` and puts fragments in a separate `FRAGMENTS` image. Each tile is a crop from the middle of a page at full resolution — the same as zooming to 100% in the viewer — and is labelled with what it is.
+One image per manuscript in the `spot/` folder, made by default by both tools. Each tile is a crop from the middle of a page at full resolution — the same as zooming to 100% in the viewer — and is labelled with what it is.
 
-- **Ordinary odd page / ordinary even page** (IIIF tool): a typical page from each side, not a flagged one. If both are acceptable, that manuscript is acceptable apart from any individually flagged pages. If one isn't, the pages on that side generally aren't either. In a manuscript with a side pattern, expect the soft side to look softer; the question is whether it's still acceptable. The TIFF tool shows three typical pages rather than one per side.
+- **Ordinary odd page / ordinary even page**: a typical page from each side, not a flagged one. If both are acceptable, that manuscript is acceptable apart from any individually flagged pages. If one isn't, the pages on that side generally aren't either. In a manuscript with a side pattern, expect the soft side to look softer; the question is whether it's still acceptable.
 - **Fragment – judge focus directly**: every fragment, since they aren't compared with anything.
 
 This is the only check for a manuscript that is soft *throughout*: every comparison the tool makes is relative, so a uniformly soft book looks normal to it.
@@ -153,14 +154,13 @@ This is the only check for a manuscript that is soft *throughout*: every compari
 |---|---|---|
 | `--local-ratio-threshold` | 0.70 | Lower flags fewer pages; higher flags more. |
 | `--roi` | `central` | `full` measures the whole image. |
-| `--output-dir` | `output/` | IIIF: where batch folders are created. |
-| `--output` | `output/…` | TIFF, AI review: report file. |
-| `--no-spot-check` | — | IIIF: skip the spot-check sheets. |
-| `--spot-check` | off | TIFF: folder for spot-check sheets. |
-| `--spot-check-pages` | 2 (IIIF), 3 (TIFF) | Ordinary pages per sheet. |
+| `--output-dir` | `output/` | Where batch folders are created. |
+| `--output` | `output/ai_review.csv` | AI review: results file. |
+| `--no-spot-check` | — | Skip the spot-check sheets. |
+| `--spot-check-pages` | 2 | Ordinary pages per sheet, one per side. |
 | `--workers` | 6 (IIIF) | Simultaneous downloads. |
 | `--cache-dir` | `output/.iiif_cache` | IIIF image cache, shared by both IIIF-based scripts. |
-| `--skip-first`, `--skip-last` | 0 | TIFF, bare-sequence items: covers at each end. |
+| `--skip-first`, `--skip-last` | 0 | TIFF, bare-sequence items: optionally mark images at each end as covers. |
 
 Run either script with `--help` for the full list.
 
