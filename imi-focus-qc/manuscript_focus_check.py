@@ -1,5 +1,6 @@
 """Focus QC for IMI manuscript images on disk (TIFF). See README.md."""
 import argparse
+from bisect import bisect_left
 import csv
 import re
 import shutil
@@ -209,22 +210,26 @@ def robust_z(median, mad, x):
     return 0.6745 * (x - median) / mad
 
 
-def local_neighbour_ratios(ordered_paths, score_by_path, window):
+def local_neighbour_ratios(ordered_paths, score_by_path, window, skip=()):
     out = {}
-    scores = [score_by_path.get(str(p)) for p in ordered_paths]
-    n = len(ordered_paths)
-    for i, p in enumerate(ordered_paths):
+    keys = [str(p) for p in ordered_paths]
+    scores = [score_by_path.get(k) for k in keys]
+    scored = [j for j in range(len(keys)) if scores[j] is not None]
+    unskipped = [j for j in scored if keys[j] not in skip]
+    for i, k in enumerate(keys):
         s_i = scores[i]
         if s_i is None:
             continue
-        nb = [scores[j] for j in range(max(0, i - window), min(n, i + window + 1))
-              if j != i and scores[j] is not None]
+        usable = scored if k in skip else unskipped
+        pos = bisect_left(usable, i)
+        nxt = pos + 1 if pos < len(usable) and usable[pos] == i else pos
+        nb = [scores[j] for j in usable[max(0, pos - window):pos] + usable[nxt:nxt + window]]
         if not nb:
             continue
         ref = float(np.median(nb))
         if ref <= 0:
             continue
-        out[str(p)] = (ref, s_i / ref)
+        out[k] = (ref, s_i / ref)
     return out
 
 
@@ -259,7 +264,7 @@ def make_spot_check_sheet(folder_name, ordered_paths, score_by_path, local_map,
     label_h = 26
     tile_w = max(t[2].width for t in tiles)
     tile_h = max(t[2].height for t in tiles)
-    cols = min(len(tiles), 3)
+    cols = min(len(tiles), 2)
     rows_n = (len(tiles) + cols - 1) // cols
     sheet = Image.new("RGB", (tile_w * cols, (tile_h + label_h) * rows_n), "white")
     draw = ImageDraw.Draw(sheet)
@@ -463,6 +468,11 @@ def main():
                 color_distance[p] = dist
                 color_flag[p] = dist > args.color_threshold
 
+    blank_by_folder = {
+        name: blank_ids([{"id": r[2], "group": r[1], "score": r[3], "brightness": r[4], "ink": r[6]}
+                         for r in results if r[0] == name and r[8] is None])
+        for name in folder_groups}
+
     rows = []
     flagged_paths = []
     all_scores_by_path = {}
@@ -493,7 +503,8 @@ def main():
         local_map = {}
         if not args.disable_local and group_name not in SEPARATE_GROUPS:
             ordered = folder_groups.get(folder_name, {}).get(group_name, [])
-            local_map = local_neighbour_ratios(ordered, score_by_path, args.local_window)
+            local_map = local_neighbour_ratios(ordered, score_by_path, args.local_window,
+                                               skip=blank_by_folder.get(folder_name, set()))
         if group_name == "content":
             local_by_folder.setdefault(folder_name, {}).update(local_map)
             scores_by_folder.setdefault(folder_name, {}).update(score_by_path)
@@ -577,7 +588,8 @@ def main():
                           "local_ratio": float(r["local_ratio"]) if r.get("local_ratio") not in ("", None) else None,
                           "pos": tok, "group": r["group"], 
                           "local_flag": "local" in (r.get("flag_reason") or "")})
-        pat, notes = manuscript_level(pages, near_ends=NEAR_ENDS)
+        pat, notes = manuscript_level(pages, near_ends=NEAR_ENDS,
+                                      blanks=blank_by_folder.get(folder_name, set()))
         ms_patterns[folder_name] = pat
         for r in frows:
             r["page_note"] = notes.get(r["path"], "")
@@ -627,7 +639,7 @@ def main():
             "side_pattern": (ms_patterns.get(name) or {}).get("verdict", ""),
             "side_pattern_detail": describe_side_pattern(ms_patterns[name]) if ms_patterns.get(name) else "",
             "flags": len(flagged),
-            "flags_explained_by_pattern": sum(1 for r in flagged if r["page_note"].startswith("one instance")),
+            "flags_explained_by_pattern": sum(1 for r in flagged if r["page_note"].startswith(PATTERN_NOTE)),
             "flags_on_blank_pages": sum(1 for r in flagged if r["page_note"].startswith("likely blank")),
             "flags_needing_individual_review": sum(1 for r in flagged if needs_review(r["page_note"])),
             "possible_lift_or_tilt": sum(1 for r in flagged if "possible lift" in r["page_note"]),
@@ -659,6 +671,21 @@ def main():
                      + (f" ({sm['near_start_or_end']} near the start or end)" if sm["near_start_or_end"] else "")
                      + (f" ({sm['possible_lift_or_tilt']} possible lift or tilt)" if sm["possible_lift_or_tilt"] else "")
                      + (f"; {sm['read_errors']} read errors" if sm["read_errors"] else ""))
+        stretches = (ms_patterns.get(sm["manuscript"]) or {}).get("stretches", [])
+        if stretches:
+            lines.append("    judge with the pattern (a soft page and its neighbour are on the spot-check sheet):")
+            for st in stretches:
+                lines.append(f"      {describe_stretch(st, lambda k: Path(k).name)}")
+        review = [r for r in rows if r["folder"] == sm["manuscript"]
+                  and r["flagged_possibly_out_of_focus"] == "YES" and needs_review(r["page_note"])]
+        review.sort(key=lambda r: natural_sort_key(r["file"]))
+        if review:
+            lines.append("    review individually:")
+            for r in review[:REVIEW_LIST_MAX]:
+                lines.append(f"      {r['file']}  {r['flag_reason']}"
+                             + (f"; {r['page_note']}" if r["page_note"] else ""))
+            if len(review) > REVIEW_LIST_MAX:
+                lines.append(f"      ... and {len(review) - REVIEW_LIST_MAX} more in report.csv")
         if sm["missing_during_run"]:
             lines.append(f"    WARNING: {sm['missing_during_run']} files disappeared after being listed. The "
                          f"drive or share probably disconnected during the run, so this manuscript's "
@@ -694,6 +721,13 @@ def main():
             picks = picks[:max(1, args.spot_check_pages)]
             roles = {str(pp): f"ordinary {'odd' if index_of.get(str(pp), 0) % 2 else 'even'} page"
                      for pp in picks}
+            by_str = {str(pp): pp for pp in cands}
+            for st in (ms_patterns.get(folder_name) or {}).get("stretches", []):
+                pair = sorted((st["pick_id"], st["neighbour_id"]), key=lambda k: index_of.get(k, 0))
+                if all(k in by_str and by_str[k] not in picks for k in pair):
+                    for k in pair:
+                        roles[k] = ("soft " + side_label(st["side"]) + " page" if k == st["pick_id"] else "its neighbour")
+                        picks.append(by_str[k])
             frags = groups.get("fragment", [])
             for fp in frags:
                 roles[str(fp)] = "fragment - judge focus directly"
@@ -709,8 +743,9 @@ def main():
         print(f"\nSpot-check sheets: {made} written to {spot_dir}/")
         for line in skipped:
             print(f"  no sheet for {line}")
-        print("  One ORDINARY page from each side of the opening, plus every fragment, at native")
-        print("  resolution. If both look soft, the whole item may be out of focus.")
+        print("  One ORDINARY page from each side of the opening, a soft page and its neighbour from")
+        print("  each side-pattern stretch, and every fragment, at native resolution. If both")
+        print("  ordinary pages look soft, the whole item may be out of focus.")
 
     if args.contact_sheets and flagged_paths:
         print(f"Writing {len(flagged_paths)} contact sheets to {args.contact_sheets}/ ...")
@@ -860,7 +895,9 @@ SEPARATE_NOTES = {
 
 PATTERN_EXPLAINS = 0.70
 UNEVEN_RATIO = 0.50
-EXPLAINED_PREFIXES = ("one instance", "likely blank", "fragment", "insert")
+PATTERN_NOTE = "part of the side pattern - judge with the pattern, not page by page"
+EXPLAINED_PREFIXES = ("part of the side pattern", "likely blank", "fragment", "insert")
+REVIEW_LIST_MAX = 20
 
 
 def needs_review(note):
@@ -890,19 +927,80 @@ def _uneven(page, same_side):
             f"- possible lift or tilt rather than focus")
 
 
-def manuscript_level(pages, near_ends=0):
+def blank_ids(pages):
     content = [p for p in pages if p["group"] == "content" and p["score"] is not None]
     if len(content) < 6:
-        return None, {}
+        return set()
     med = float(np.median([p["score"] for p in content]))
     bvals = [p["brightness"] for p in content if p["brightness"] is not None]
     mb = float(np.median(bvals)) if bvals else 0.0
     ivals = [p.get("ink") for p in content if p.get("ink") is not None]
     mi = float(np.median(ivals)) if ivals else None
+    return {p["id"] for p in content
+            if is_blank(p["score"], med, p["brightness"], mb, p.get("ink"), mi)}
+
+
+def soft_stretches(pat, usable, side_of):
+    if pat["verdict"] in ("systematic", "mild"):
+        spans = [(pat["softer_side"], None, None)]
+    elif pat["verdict"] in ("drift", "localized"):
+        spans = []
+        for a, b, wr, _n in pat["windows"]:
+            soft = pat["side_a"] if wr < 1 else pat["side_b"]
+            if (wr if wr < 1 else 1 / wr) >= SIDE_SYSTEMATIC:
+                continue
+            if spans and spans[-1][0] == soft and a <= spans[-1][2]:
+                spans[-1] = (soft, spans[-1][1], b)
+            else:
+                spans.append((soft, a, b))
+    else:
+        return []
+
+    paired = [p for p in usable if side_of[p["id"]] in (pat["side_a"], pat["side_b"])]
+    pr, nbr = {}, {}
+    for i, p in enumerate(paired):
+        adj = [paired[j] for j in (i - 1, i + 1) if 0 <= j < len(paired)
+               and side_of[paired[j]["id"]] != side_of[p["id"]] and paired[j]["score"] > 0]
+        if adj and p["score"] > 0:
+            pr[p["id"]] = p["score"] / (sum(q["score"] for q in adj) / len(adj))
+            nbr[p["id"]] = adj[-1]["id"]
+
+    out = []
+    for soft, a, b in spans:
+        inside = [p for p in paired if side_of[p["id"]] == soft and p["id"] in pr
+                  and (a is None or a - 1 <= p["seq"] <= b + 1)]
+        low = [p for p in inside if pr[p["id"]] < SIDE_SYSTEMATIC]
+        if not low:
+            continue
+        span = [p for p in inside if low[0]["seq"] <= p["seq"] <= low[-1]["seq"]]
+        m = float(np.median([pr[p["id"]] for p in span]))
+        pick = min(span, key=lambda p: abs(pr[p["id"]] - m))
+        out.append({"side": soft, "first_id": low[0]["id"], "last_id": low[-1]["id"],
+                    "first_seq": low[0]["seq"], "last_seq": low[-1]["seq"],
+                    "n": len(span), "ratio": round(m, 2),
+                    "pick_id": pick["id"], "neighbour_id": nbr[pick["id"]]})
+    return out
+
+
+def side_label(side):
+    return {"r": "recto", "v": "verso"}.get(side, side)
+
+
+def describe_stretch(st, name_of):
+    return (f"{side_label(st['side'])} pages {name_of(st['first_id'])} to {name_of(st['last_id'])} "
+            f"({st['n']} pages, typically {st['ratio']:.2f}x their neighbours)")
+
+
+def manuscript_level(pages, near_ends=0, blanks=None):
+    content = [p for p in pages if p["group"] == "content" and p["score"] is not None]
+    if len(content) < 6:
+        return None, {}
+    if blanks is None:
+        blanks = blank_ids(pages)
 
     notes, usable = {}, []
     for p in sorted(content, key=lambda p: p["seq"]):
-        if is_blank(p["score"], med, p["brightness"], mb, p.get("ink"), mi):
+        if p["id"] in blanks:
             notes[p["id"]] = "likely blank page (very low score at paper-level brightness) - not a focus call"
         else:
             usable.append(p)
@@ -911,6 +1009,7 @@ def manuscript_level(pages, near_ends=0):
     side_of = {p["id"]: _side_of(p["pos"], p["seq"])[0] for p in usable}
     if pat["basis"].startswith("sequence"):
         side_of = {p["id"]: ("odd" if p["seq"] % 2 else "even") for p in usable}
+    pat["stretches"] = soft_stretches(pat, usable, side_of)
 
     for p in usable:
         if not p["local_flag"]:
@@ -920,16 +1019,13 @@ def manuscript_level(pages, near_ends=0):
         if pat["verdict"] in ("systematic", "mild") and side == pat["softer_side"]:
             expected = pat["severity"]
         elif pat["verdict"] in ("drift", "localized"):
-            for a, b, wr, _n in pat["windows"]:
-                if a <= p["seq"] <= b:
-                    wsoft = pat["side_a"] if wr < 1 else pat["side_b"]
-                    wsev = wr if wr < 1 else 1 / wr
-                    if side == wsoft and wsev < SIDE_MILD:
-                        expected = wsev
+            for st in pat["stretches"]:
+                if side == st["side"] and st["first_seq"] <= p["seq"] <= st["last_seq"]:
+                    expected = st["ratio"]
                     break
         if expected is not None:
             if lr is None or lr >= PATTERN_EXPLAINS * expected:
-                notes[p["id"]] = "one instance of the manuscript-level side pattern"
+                notes[p["id"]] = PATTERN_NOTE
                 continue
             notes[p["id"]] = (f"much softer than the side pattern ({lr:.2f} of neighbours, "
                               f"pattern {expected:.2f})")

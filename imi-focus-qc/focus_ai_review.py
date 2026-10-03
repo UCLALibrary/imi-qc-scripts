@@ -63,7 +63,7 @@ def crop_b64(row, crop_px, cache_dir, jpeg_quality=92):
     return centre_crop_b64(Path(row["path"]), crop_px, jpeg_quality)
 
 
-EXPLAINED = ("one instance", "likely blank", "fragment", "insert")
+EXPLAINED = ("part of the side pattern", "one instance", "likely blank", "fragment", "insert")
 
 
 def centre_crop_b64(path: Path, crop_px: int, jpeg_quality: int = 92):

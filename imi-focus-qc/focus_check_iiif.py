@@ -23,7 +23,7 @@ from manuscript_focus_check import (
     local_neighbour_ratios, robust_stats, robust_z, ink_deficit,
     manuscript_level, describe_side_pattern, parse_segment_and_position,
     object_kind, SEPARATE_GROUPS, SEPARATE_NOTES, region_grid, needs_review,
-    ROI_CENTRAL,
+    ROI_CENTRAL, blank_ids, describe_stretch, PATTERN_NOTE, REVIEW_LIST_MAX, side_label,
 )
 
 Image.MAX_IMAGE_PIXELS = None
@@ -177,7 +177,7 @@ def spot_check_sheet(ark_label, ordered_rows, score_by_key, local_map,
     label_h = 26
     tw = max(t[2].width for t in tiles)
     th = max(t[2].height for t in tiles)
-    cols = min(len(tiles), 3)
+    cols = min(len(tiles), 2)
     rows_n = (len(tiles) + cols - 1) // cols
     sheet = Image.new("RGB", (tw * cols, (th + label_h) * rows_n), "white")
     draw = ImageDraw.Draw(sheet)
@@ -277,13 +277,16 @@ def run_batch(args, roi, csv_path):
     out_rows, summaries, spot_inputs = [], [], {}
     for ark, items in sorted(by_ark.items()):
         group_of = classify_item(items, bright)
+        blanks = blank_ids([{"id": key_of(r), "group": group_of[key_of(r)], "score": scores[key_of(r)],
+                             "brightness": bright[key_of(r)], "ink": ink[key_of(r)]}
+                            for r in items if key_of(r) in scores])
         rows_by_key = {}
         for group in ("content", "cover", "exterior") + SEPARATE_GROUPS:
             g = [r for r in items if group_of[key_of(r)] == group and key_of(r) in scores]
             if not g:
                 continue
             sbp = {key_of(r): scores[key_of(r)] for r in g}
-            lm = (local_neighbour_ratios([key_of(r) for r in g], sbp, args.local_window)
+            lm = (local_neighbour_ratios([key_of(r) for r in g], sbp, args.local_window, skip=blanks)
                   if group == "content" else {})
             vals = list(sbp.values())
             med, mad = robust_stats(vals) if len(vals) >= 3 else (None, None)
@@ -329,7 +332,7 @@ def run_batch(args, roi, csv_path):
                           "group": rec["group"], "local_flag": "local" in rec["flag_reason"],
                           "grid": grids.get(k),
                           "local_ratio": rec["local_ratio"] if rec["local_ratio"] != "" else None})
-        pat, notes = manuscript_level(pages)
+        pat, notes = manuscript_level(pages, blanks=blanks)
         for k, note in notes.items():
             rows_by_key[k]["page_note"] = note
 
@@ -356,7 +359,7 @@ def run_batch(args, roi, csv_path):
             "side_pattern": pat["verdict"] if pat else "",
             "side_pattern_detail": describe_side_pattern(pat) if pat else "",
             "flags": len(flagged),
-            "flags_explained_by_pattern": sum(1 for x in flagged if x["page_note"].startswith("one instance")),
+            "flags_explained_by_pattern": sum(1 for x in flagged if x["page_note"].startswith(PATTERN_NOTE)),
             "flags_on_blank_pages": sum(1 for x in flagged if x["page_note"].startswith("likely blank")),
             "fragments_for_visual_check": sum(1 for x in recs if x["group"] == "fragment"),
             "inserts": sum(1 for x in recs if x["group"] == "insert"),
@@ -364,7 +367,7 @@ def run_batch(args, roi, csv_path):
             "possible_lift_or_tilt": sum(1 for x in flagged if "possible lift" in x["page_note"]),
             "fetch_errors": sum(1 for x in recs if x["error"]),
         })
-        spot_inputs[ark] = (items, rows_by_key)
+        spot_inputs[ark] = (items, rows_by_key, (pat or {}).get("stretches", []))
 
     prepare_dir(out_dir)
     out_rows.sort(key=lambda r: (r["manuscript"], int(r["sequence"] or 0)))
@@ -391,6 +394,22 @@ def run_batch(args, roi, csv_path):
                      f"{sm['flags_needing_individual_review']} need individual review"
                      + (f" ({sm['possible_lift_or_tilt']} possible lift or tilt)" if sm['possible_lift_or_tilt'] else "")
                      + (f"; {sm['fetch_errors']} fetch errors" if sm['fetch_errors'] else ""))
+        items, rows_by_key, stretches = spot_inputs[sm["manuscript"]]
+        title_of = {key_of(r): r.get("Title") or key_of(r) for r in items}
+        if stretches:
+            lines.append("    judge with the pattern (a soft page and its neighbour are on the spot-check sheet):")
+            for st in stretches:
+                lines.append(f"      {describe_stretch(st, lambda k: title_of.get(k, k))}")
+        review = [x for x in out_rows if x["manuscript"] == sm["manuscript"]
+                  and x["flagged_possibly_out_of_focus"] == "YES" and needs_review(x["page_note"])]
+        review.sort(key=lambda x: int(x["sequence"] or 0))
+        if review:
+            lines.append("    review individually:")
+            for x in review[:REVIEW_LIST_MAX]:
+                lines.append(f"      seq {x['sequence']} {x['title']}  {x['flag_reason']}"
+                             + (f"; {x['page_note']}" if x["page_note"] else ""))
+            if len(review) > REVIEW_LIST_MAX:
+                lines.append(f"      ... and {len(review) - REVIEW_LIST_MAX} more in report.csv")
     for line in lines:
         print(line)
     header = [f"{csv_path.name} - {len(rows)} images across {len(by_ark)} manuscripts",
@@ -401,7 +420,7 @@ def run_batch(args, roi, csv_path):
 
     if args.spot_check:
         made = 0
-        for ark, (items, rows_by_key) in spot_inputs.items():
+        for ark, (items, rows_by_key, stretches) in spot_inputs.items():
             cands = [r for r in items if key_of(r) in rows_by_key
                      and rows_by_key[key_of(r)]["group"] == "content"
                      and not rows_by_key[key_of(r)]["page_note"].startswith("likely blank")]
@@ -414,6 +433,14 @@ def run_batch(args, roi, csv_path):
             picks = picks[:max(1, args.spot_check_pages)]
             roles = {key_of(r): f"ordinary {'odd' if seq_of(r) % 2 else 'even'} page"
                      for r in picks}
+            by_key = {key_of(r): r for r in cands}
+            for st in stretches:
+                pair = sorted((st["pick_id"], st["neighbour_id"]),
+                              key=lambda k: seq_of(by_key[k]) if k in by_key else 0)
+                if all(k in by_key and by_key[k] not in picks for k in pair):
+                    for k in pair:
+                        roles[k] = ("soft " + side_label(st["side"]) + " page" if k == st["pick_id"] else "its neighbour")
+                        picks.append(by_key[k])
             frags = [r for r in items if key_of(r) in rows_by_key
                      and rows_by_key[key_of(r)]["group"] == "fragment"]
             for r in frags:
@@ -424,8 +451,9 @@ def run_batch(args, roi, csv_path):
                                             len(tiles), args.spot_check_crop, roles=roles):
                 made += 1
         print(f"\nSpot-check sheets: {made} written to {args.spot_check}/")
-        print("  One ORDINARY page from each side of the opening, plus every fragment, at native")
-        print("  resolution. Fragments are not compared with pages -- judge their focus directly.")
+        print("  One ORDINARY page from each side of the opening, a soft page and its neighbour from")
+        print("  each side-pattern stretch, and every fragment, at native resolution. Fragments are")
+        print("  not compared with pages -- judge their focus directly.")
         print("  If both look soft, the whole item may be out of focus -- no relative check sees that.")
 
 

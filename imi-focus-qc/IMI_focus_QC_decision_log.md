@@ -347,6 +347,21 @@ The reviewer's point that settled it: many manuscripts have no binding at all, s
 
 **First TIFF results (NetApp, uclalsc_1147):** ms0503 systematic, odd 0.69× (96% of 24 pairs); ms0893 mild, odd 0.82× (95% of 37 pairs) — the recto pattern in a fourth collection. ms0503's 19 blank-tagged pages form runs at both ends (blank flyleaves), consistent with the blank rule rather than a threshold misfire. These files use a `p` segment code for pages, which the tool doesn't list among its known codes; they fall through to the page group, which is correct, but sides then come from sequence parity rather than the filename. Confirmed with the project: `p` is the paginated counterpart of `f`, and it is now a recognized code handled the same way. The practical difference is that an item named only with `p` codes is read as segment-coded rather than bare-sequence; sides still come from sequence parity, since page numbers carry no recto/verso marker.
 
+### D19. Side-pattern stretches reported as ranges; blank pages no longer used as neighbours
+**What prompted it.** In a new batch (uclalsc_0833), Molly found that ms0006's odd/even split affected only part of the book. The typical pages on the spot-check sheet (seq 526 and 633) came from the half with no pattern, so they looked fine. Images 4 and 6 were about equally soft, and image 5 was crisp, but the report labelled them differently: 6 as part of the side pattern, and 4 only as an item-wide outlier.
+
+**Diagnosis.** Image 3 is blank (score 113) but was still used as one of image 4's two neighbours, which pulled 4's reference down. That left 4 at 0.701, just above the 0.70 cutoff, so it had no local flag and therefore no pattern attribution. It was not a window-edge bug. The same report showed that the flag list undercounts a pattern: evens 12, 16 and 20 are as soft as the flagged evens but sit at 0.71–0.72. If the vendor reshoots from the flag list alone, those pages would be missed.
+
+**Changes (both tools).**
+- *Blank pages are not used as neighbours.* A page next to a blank is compared with the nearest non-blank page on each side. Two options were weighed: skip to the next non-blank page, which keeps two neighbours (chosen), or use the one remaining neighbour, which is noisier. Blank pages are still compared with their immediate neighbours, so runs of blank leaves are not newly flagged. Unreadable pages are skipped the same way. With this change, ms0006 image 4 is at 0.49 and labelled as part of the pattern, the same as image 6.
+- *Stretches.* Consecutive windows in which the same side is below 0.80 of the other are merged into a stretch. The stretch is trimmed to the first and last soft-side pages below 0.80 of their facing pages. For systematic or mild verdicts, the stretch is the whole book. For ms0006 the stretches are evens 4–86 (0.55×) and odds 223–283 (0.62×).
+- *Drift and localized pages are attributed by stretch*, using the stretch's typical ratio as the expectation for Fix A. Previously the first window containing the page was used. In a synthetic test that stopped half of a real stretch from being listed for individual review, and it keeps the page notes consistent with the ranges in the summary. Systematic and mild verdicts still use whole-book severity (D17).
+- *summary.txt* lists each stretch as a file range under "judge with the pattern", and the pages needing individual review, up to 20.
+- *Spot-check sheet* adds, for each stretch, a typical soft-side page and the page facing it. The sheet is now two tiles across, so pairs sit side by side.
+- *Label* "one instance of the manuscript-level side pattern" becomes "part of the side pattern - judge with the pattern, not page by page". The AI review script accepts both.
+
+**Effect on uclalsc_0833 (21 manuscripts, recomputed from the report's scores).** Flags went from 560 to 565 and pages needing review from 67 to 71. Pages newly surfaced for review: ms0162 p_04, ms0166 p_28 and ms0171 p_39, each next to a blank leaf; and ms0011 p_316 and p_334, which are in a mild zone (0.8–0.9) and outside any stretch. Also newly surfaced: ms0011 p_480, which at 0.43 is now below 0.70 of its stretch. No longer needing review: ms0006 image 4 (now part of the pattern) and ms0019 0451.
+
 ---
 
 ## Known limitations

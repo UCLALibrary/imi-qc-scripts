@@ -87,7 +87,7 @@ If you're reading from a USB drive and the summary warns that files **disappeare
 
 3. **Looks for a side pattern** in each manuscript: whether pages on one side of the opening are consistently softer than those on the other. Uses recto/verso from filenames where they're encoded, otherwise odd/even sequence numbers.
 
-4. **Flags individual pages** that are much softer than their immediate neighbours (below 0.70 of them by default).
+4. **Flags individual pages** that are much softer than their immediate neighbours (below 0.70 of them by default). Likely blank pages are not used as neighbours: a page next to a blank is compared with the nearest page with writing on each side.
 
 5. **Annotates flags.** Some have an ordinary explanation (part of the side pattern, a blank leaf). Others get a note saying why they're worth a look: much softer than the side pattern, or softness concentrated on one side of the page (a possible lift or tilt). Nothing is removed.
 
@@ -109,6 +109,11 @@ Printed at the end of the run. Both tools save the printed text as `summary.txt`
 
 The line also shows the range across the book and the stretch where it's strongest, e.g. "strongest in seq 377–395".
 
+Under it, `summary.txt` gives two short lists:
+
+- **judge with the pattern**: each stretch where one side is clearly softer (below 0.80 of the other side), as a range of files, e.g. "even pages …_0004.tif to …_0086.tif (42 pages, typically 0.55x their neighbours)". For a systematic or mild pattern this is usually most of the book. Judge each stretch once, from the pair on the spot-check sheet, rather than page by page. The range covers every page in the stretch, including soft pages that fell just short of being flagged.
+- **review individually**: the flagged pages that need their own look (up to 20; the rest are in `report.csv`).
+
 ### 2. The page report
 
 `report.csv`, one row per image. The flags worth looking at are those with `flagged_possibly_out_of_focus = YES` whose `page_note` is empty or is one of the "look at this" notes below. The summary gives the count as "need individual review".
@@ -121,7 +126,7 @@ The line also shows the range across the book and the stretch where it's stronge
 | `much softer than the side pattern (…)` | On the soft side, but well beyond the pattern (below 0.70 of it). Needs looking at. |
 | `near the start/end of the item - may be a cover, pastedown or flyleaf` | TIFF tool: flagged, and within the first or last three pages. Usually a cover or blank leaf; worth a glance, since a genuinely soft first page does happen. |
 | `softness uneven across the page (softest at …)` | Part of the page is much softer than the rest, compared with other pages on the same side. Suggests the page lifted or tilted rather than a focus error. Needs looking at. |
-| `one instance of the manuscript-level side pattern` | This page is soft because of the side pattern; deal with the pattern rather than the page. |
+| `part of the side pattern - judge with the pattern, not page by page` | This page is soft because of the side pattern and sits in one of the stretches listed in the summary. Judge the stretch rather than the page. (Older reports say `one instance of the manuscript-level side pattern`.) |
 | `likely blank page …` | Little or no writing, so a low score isn't a focus problem. |
 | `fragment - …` | Not compared with pages; check it on the spot-check sheet. |
 | `insert - …` | Not part of the text block; not checked. |
@@ -133,6 +138,7 @@ Other useful columns: `local_ratio` (sharpness as a fraction of the neighbours),
 One image per manuscript in the `spot/` folder, made by default by both tools. Each tile is a crop from the middle of a page at full resolution — the same as zooming to 100% in the viewer — and is labelled with what it is.
 
 - **Ordinary odd page / ordinary even page**: a typical page from each side, not a flagged one. If both are acceptable, that manuscript is acceptable apart from any individually flagged pages. If one isn't, the pages on that side generally aren't either. In a manuscript with a side pattern, expect the soft side to look softer; the question is whether it's still acceptable.
+- **Soft … page / its neighbour**: for each stretch listed under "judge with the pattern", a typical page from the soft side next to the page facing it. If the soft page is acceptable, the stretch is; if not, the stretch needs reshooting.
 - **Fragment – judge focus directly**: every fragment, since they aren't compared with anything.
 
 This is the only check for a manuscript that is soft *throughout*: every comparison the tool makes is relative, so a uniformly soft book looks normal to it.
@@ -143,7 +149,7 @@ This is the only check for a manuscript that is soft *throughout*: every compari
 |---|---|
 | A few badly out-of-focus pages | Page report: flags needing review |
 | A page lifted or tilted | Page report: "softness uneven across the page" |
-| One side of the opening softer | Manuscript summary |
+| One side of the opening softer | Manuscript summary ("judge with the pattern") and the soft-page pair on the spot-check sheet |
 | Whole manuscript soft | Spot-check sheet only |
 | Fragments | Spot-check sheet only |
 | Blank leaves | Page report, noted as likely blank |
