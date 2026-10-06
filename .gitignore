@@ -3,3 +3,5 @@ __pycache__/
 .iiif_cache
 
 .DS_Store
+
+imi-focus-qc/focus-qc-stretches.diff
